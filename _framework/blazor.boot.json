@@ -1,0 +1,66 @@
+{
+  "mainAssemblyName": "Rome.Viewer.Web",
+  "resources": {
+    "hash": "sha256-9lRbdgRsqlVMDML2rKom/Tfg2AUbIwDX1mjioV8kTS0=",
+    "jsModuleNative": {
+      "dotnet.native.js": "sha256-1DK+nm58uZjvv7U2c/UlUp1zFjeBZnqXHFHBX/W1igo="
+    },
+    "jsModuleRuntime": {
+      "dotnet.runtime.js": "sha256-aa75BhVU2iAzc0Nj93nvwfQ2raXDjiW4VBNfRLHRJgM="
+    },
+    "wasmNative": {
+      "dotnet.native.wasm": "sha256-nuafJqZB4VQTUYFCIRJ7Km/BqoRcArOifoPpa1cW/Mk="
+    },
+    "coreAssembly": {},
+    "assembly": {
+      "Rome.Sim.wasm": "sha256-5B+rHN4nxkm3rjaOyGl/VOHdUzyuYkUfwT9+yvTrClA=",
+      "Rome.Viewer.Web.wasm": "sha256-fH9Q4bDb5Bb8aXiRSdWMtBfc6j1/m3y2V/XVZxy5Bpg=",
+      "System.Collections.Concurrent.wasm": "sha256-Bg/oWDpyph7E3Z8dSbxK1ybS8Iquec9CT2/5gWL51Bg=",
+      "System.Collections.wasm": "sha256-84521fpvE+sx0Bgf3BkJlKdLTO/M0iLg+cyHkEVF13Y=",
+      "System.Linq.wasm": "sha256-rrUEE/vhUTRlcxCQuiXT2S6ps2cprrfXjiylWO5cmFg=",
+      "System.Memory.wasm": "sha256-AUrb2qw8wuBC5nAFqL3g7LDVmF/wFwIiPrjT8N+6OC0=",
+      "System.Private.CoreLib.wasm": "sha256-+oTRTeBafRTaBe+t6/YAOAYzzEu2fSmF3zsAxIcDVUQ=",
+      "System.Private.Uri.wasm": "sha256-FLdzWl3+v2zIyCOKd2nXvMxMUVt0z7ICQLbHWWhMhmg=",
+      "System.Runtime.InteropServices.JavaScript.wasm": "sha256-M/tA1Po1+laq9lgS1re2uv09wIsYB/Arl4eWt3v+7eg=",
+      "System.Runtime.wasm": "sha256-aAFDw7Cy+n1Z/s1euxWdKz2bxh9PQ2VitOvJ6yrO9O8=",
+      "System.Text.Encodings.Web.wasm": "sha256-K73DaYnMj0DK4htIP2pXIhAOArQdt6/0IOoNgEb4rQc=",
+      "System.Text.Json.wasm": "sha256-SFtEoVEHH5XDVisYO6iPPmUYaeGwRuB9dMctrGbh/6g=",
+      "System.Text.RegularExpressions.wasm": "sha256-XM/WoU5CIzYw0nsGz61nnPtYfeAFQM/Qr2mgfBLGBvc=",
+      "System.Threading.wasm": "sha256-3/AWRlIkMao2VyrCucPLnuBPJfd+To379V+ucDt2qgY="
+    }
+  },
+  "cacheBootResources": true,
+  "debugLevel": 0,
+  "linkerEnabled": true,
+  "globalizationMode": "invariant",
+  "runtimeConfig": {
+    "runtimeOptions": {
+      "configProperties": {
+        "Microsoft.Extensions.DependencyInjection.VerifyOpenGenericServiceTrimmability": true,
+        "System.ComponentModel.TypeConverter.EnableUnsafeBinaryFormatterInDesigntimeLicenseContextSerialization": false,
+        "System.Diagnostics.Debugger.IsSupported": false,
+        "System.Diagnostics.Metrics.Meter.IsSupported": false,
+        "System.Diagnostics.Tracing.EventSource.IsSupported": false,
+        "System.Globalization.Invariant": true,
+        "System.TimeZoneInfo.Invariant": false,
+        "System.Globalization.PredefinedCulturesOnly": true,
+        "System.Linq.Enumerable.IsSizeOptimized": true,
+        "System.Net.Http.EnableActivityPropagation": false,
+        "System.Net.Http.WasmEnableStreamingResponse": true,
+        "System.Net.SocketsHttpHandler.Http3Support": false,
+        "System.Reflection.Metadata.MetadataUpdater.IsSupported": false,
+        "System.Resources.ResourceManager.AllowCustomResourceTypes": false,
+        "System.Resources.UseSystemResourceKeys": true,
+        "System.Runtime.InteropServices.BuiltInComInterop.IsSupported": false,
+        "System.Runtime.InteropServices.EnableConsumingManagedCodeFromNativeHosting": false,
+        "System.Runtime.InteropServices.EnableCppCLIHostActivation": false,
+        "System.Runtime.InteropServices.Marshalling.EnableGeneratedComInterfaceComImportInterop": false,
+        "System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization": false,
+        "System.StartupHookProvider.IsSupported": false,
+        "System.Text.Encoding.EnableUnsafeUTF7Encoding": false,
+        "System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault": true,
+        "System.Threading.Thread.EnableAutoreleasePool": false
+      }
+    }
+  }
+}

@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rome viewer</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f25; --line: #2c313a; --text: #e6e2d8; --dim: #9a968c;
+    --accent: #d8a94a; --road: #5b5f68; --path: #3e4249; --paved: #8a8478;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  #app { display: grid; grid-template-rows: auto 1fr; grid-template-columns: 1fr 340px; height: 100%; }
+  header { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+    padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0; color: var(--accent); letter-spacing: .04em; }
+  #clock { font-variant-numeric: tabular-nums; font-size: 15px; min-width: 120px; }
+  .group { display: flex; gap: 4px; align-items: center; }
+  button { background: #262a31; color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+    padding: 4px 9px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: var(--accent); color: #1a1408; border-color: var(--accent); }
+  input[type=search] { background: #262a31; color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+    padding: 4px 8px; font: inherit; width: 180px; }
+  #perf { color: var(--dim); font-variant-numeric: tabular-nums; }
+  #map { position: relative; overflow: hidden; touch-action: none; }
+  canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+  aside { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; padding: 12px; }
+  aside h2 { font-size: 16px; margin: 0 0 2px; }
+  aside h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 14px 0 6px; }
+  .sub { color: var(--dim); margin-bottom: 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 2px 0; vertical-align: top; }
+  td:first-child { color: var(--dim); width: 42%; padding-right: 8px; }
+  .bar { height: 7px; background: #2a2e36; border-radius: 4px; overflow: hidden; margin-top: 4px; }
+  .bar > div { height: 100%; }
+  a { color: var(--accent); cursor: pointer; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; }
+  .legend div { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 1px 2px; border-radius: 4px; }
+  .legend div.off { opacity: .35; }
+  .legend i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .legend span:last-child { margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .list { max-height: 180px; overflow-y: auto; }
+  .num { font-variant-numeric: tabular-nums; text-align: right; }
+  .hint { color: var(--dim); }
+  #zoom { position: absolute; right: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 4px; }
+  #zoom button { width: 34px; height: 34px; font-size: 16px; }
+  @media (max-width: 760px) {
+    #app { grid-template-columns: 1fr; grid-template-rows: auto 1fr 40%; }
+    aside { border-left: none; border-top: 1px solid var(--line); }
+    input[type=search] { width: 130px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>ROME <span id="version" style="color:var(--dim);font-weight:400;font-size:12px"></span></h1>
+    <div id="clock">…</div>
+    <div class="group" id="speeds"></div>
+    <input type="search" id="search" placeholder="Find a person…" list="names">
+    <datalist id="names"></datalist>
+    <label class="group"><input type="checkbox" id="follow"> follow</label>
+    <div id="perf"></div>
+  </header>
+  <div id="map">
+    <canvas id="canvas"></canvas>
+    <div id="zoom">
+      <button id="zin" title="Zoom in">+</button>
+      <button id="zout" title="Zoom out">−</button>
+      <button id="zfit" title="Whole island">⤢</button>
+    </div>
+  </div>
+  <aside id="panel"></aside>
+</div>
+<script type="module">
+import { api } from "./backend.js";
+const SPEEDS = [0, 1, 10, 100, 1000];
+// Colours by kind of activity: rest in cool greys and blues, work in greens, food in oranges, leisure in pinks
+// and purples, money and goods in yellows. Actions not listed get one of their own.
+const ACTION_COLOURS = {
+  sleep: "#5566a8", idle_home: "#8d8a80", family: "#c79bd8",
+  work: "#4caf6a", day_labour: "#9bd05a", errand: "#2fc4b2", unload: "#1d8f86",
+  eat_home: "#f0a040", eat_at_work: "#d9772b", eat_tavern: "#ff6b4a",
+  tavern: "#e0507a", baths: "#4fa8e8",
+  shop: "#f2d04a", salutatio: "#b07ce8", trade_buy: "#e8e070", trade_sell: "#c9a227",
+};
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const panel = document.getElementById("panel");
+
+let map = null;                 // static island data
+let prev = null, cur = null;    // the last two states, for smooth movement
+let prevAt = 0, curAt = 0;
+let view = { x: 0, y: 0, scale: 1 };   // world point at the screen centre, pixels per metre
+let selected = null;            // { kind: "agent" | "building", id }
+let hidden = new Set();         // actions hidden in the legend
+let colors = [];
+
+// ---------- data ----------
+
+
+async function start() {
+  map = await api.map();
+  document.getElementById("version").textContent = map.version === "dev" ? "dev" : "v" + map.version;
+  colors = map.actions.map((a, i) => ACTION_COLOURS[a.key] || `hsl(${(i * 137.508) % 360} 65% 60%)`);
+  document.getElementById("names").innerHTML =
+    map.agents.map(a => `<option value="${esc(a.name)} (${esc(a.occupation)})">`).join("");
+  fit();
+  drawSpeeds(1);
+  await poll();
+  setInterval(poll, 150);
+  setInterval(refreshPanel, 600);
+  showHelp();
+  requestAnimationFrame(frame);
+}
+
+async function poll() {
+  try {
+    const s = await api.state();
+    prev = cur; prevAt = curAt;
+    cur = s; curAt = performance.now();
+    document.getElementById("clock").textContent = `Day ${s.day + 1} · ${clock(s.hour)}`;
+    document.getElementById("perf").textContent =
+      `sim ${s.frameMs.toFixed(1)} ms/frame` + (s.lagSeconds > 60 ? ` · behind ${Math.round(s.lagSeconds / 60)} min` : "");
+    drawSpeeds(s.speed);
+  } catch (e) { document.getElementById("perf").textContent = "no connection"; }
+}
+
+function clock(h) {
+  const m = Math.floor(h * 60);
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+// ---------- speed ----------
+
+function drawSpeeds(speed) {
+  const box = document.getElementById("speeds");
+  if (!box.children.length)
+    box.innerHTML = SPEEDS.map(s => `<button data-s="${s}">${s === 0 ? "❚❚" : "×" + s}</button>`).join("");
+  for (const b of box.children) b.classList.toggle("on", Number(b.dataset.s) === speed);
+}
+document.getElementById("speeds").addEventListener("click", async e => {
+  const s = e.target.dataset.s;
+  if (s === undefined) return;
+  await api.speed(Number(s));
+  drawSpeeds(Number(s));
+});
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT") return;
+  const i = "01234".indexOf(e.key);
+  if (i >= 0) document.querySelector(`#speeds [data-s="${SPEEDS[i]}"]`).click();
+  if (e.key === " ") { e.preventDefault(); document.querySelector(`#speeds [data-s="${cur && cur.speed ? 0 : 1}"]`).click(); }
+});
+
+// ---------- view ----------
+
+function resize() {
+  const r = canvas.parentElement.getBoundingClientRect();
+  canvas.width = r.width * devicePixelRatio;
+  canvas.height = r.height * devicePixelRatio;
+}
+new ResizeObserver(resize).observe(canvas.parentElement);
+
+function fit() {
+  resize();
+  if (!canvas.width || !canvas.height) { requestAnimationFrame(fit); return; }
+  const xs = map.nodes.map(n => n[0]), ys = map.nodes.map(n => n[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  view.x = (minX + maxX) / 2; view.y = (minY + maxY) / 2;
+  view.scale = Math.min(canvas.width / devicePixelRatio / (maxX - minX + 200), canvas.height / devicePixelRatio / (maxY - minY + 200));
+}
+function toScreen(x, y) {
+  return [(x - view.x) * view.scale + canvas.width / devicePixelRatio / 2, (y - view.y) * view.scale + canvas.height / devicePixelRatio / 2];
+}
+function toWorld(sx, sy) {
+  return [(sx - canvas.width / devicePixelRatio / 2) / view.scale + view.x, (sy - canvas.height / devicePixelRatio / 2) / view.scale + view.y];
+}
+function zoomAt(sx, sy, factor) {
+  const [wx, wy] = toWorld(sx, sy);
+  view.scale = Math.min(Math.max(view.scale * factor, 0.02), 40);
+  const [nx, ny] = toWorld(sx, sy);
+  view.x += wx - nx; view.y += wy - ny;
+}
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  zoomAt(e.offsetX, e.offsetY, Math.exp(-e.deltaY * 0.0015));
+}, { passive: false });
+document.getElementById("zin").onclick = () => zoomAt(canvas.clientWidth / 2, canvas.clientHeight / 2, 1.5);
+document.getElementById("zout").onclick = () => zoomAt(canvas.clientWidth / 2, canvas.clientHeight / 2, 1 / 1.5);
+document.getElementById("zfit").onclick = () => { document.getElementById("follow").checked = false; fit(); };
+
+// Drag to pan, pinch to zoom, click to pick.
+const pointers = new Map();
+let moved = 0, pinch = 0;
+canvas.addEventListener("pointerdown", e => {
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+  moved = 0;
+  if (pointers.size === 2) pinch = spread();
+});
+canvas.addEventListener("pointermove", e => {
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  if (pointers.size === 1) {
+    view.x -= (e.offsetX - p.x) / view.scale;
+    view.y -= (e.offsetY - p.y) / view.scale;
+    moved += Math.abs(e.offsetX - p.x) + Math.abs(e.offsetY - p.y);
+    if (moved > 4) { canvas.classList.add("dragging"); document.getElementById("follow").checked = false; }
+  }
+  p.x = e.offsetX; p.y = e.offsetY;
+  if (pointers.size === 2) {
+    const d = spread(), [a, b] = [...pointers.values()];
+    if (pinch) zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinch);
+    pinch = d; moved = 99;
+  }
+});
+function spread() { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); }
+function release(e) {
+  if (pointers.size === 1 && moved <= 4) pick(e.offsetX, e.offsetY);
+  pointers.delete(e.pointerId);
+  pinch = 0;
+  canvas.classList.remove("dragging");
+}
+canvas.addEventListener("pointerup", release);
+canvas.addEventListener("pointercancel", e => { pointers.delete(e.pointerId); canvas.classList.remove("dragging"); });
+
+// ---------- drawing ----------
+
+let drawn = [];   // screen positions of people last drawn: [sx, sy, index]
+
+function people() {
+  // Where everyone is now: travellers move smoothly between the last two states.
+  const n = map.agents.length, out = new Array(n);
+  const t = prev ? Math.min(1, (performance.now() - curAt) / Math.max(1, curAt - prevAt)) : 1;
+  for (let i = 0; i < n; i++) {
+    const k = i * 4;
+    let x = cur.people[k], y = cur.people[k + 1];
+    if (prev && cur.people[k + 3] === 1 && prev.people[k + 3] === 1) {
+      x = prev.people[k] + (x - prev.people[k]) * t;
+      y = prev.people[k + 1] + (y - prev.people[k + 1]) * t;
+    }
+    out[i] = { x, y, action: cur.people[k + 2], travelling: cur.people[k + 3] === 1 };
+  }
+  return out;
+}
+
+function buildingColour(type) {
+  if (/insula|house|villa|home/.test(type)) return "#6d6a63";
+  if (type === "market") return "#d8a94a";
+  if (type === "tavern") return "#c0603e";
+  if (type === "baths") return "#4f8fc0";
+  if (type === "port" || type === "warehouse") return "#7d6fb0";
+  if (type === "guard") return "#a04848";
+  return "#5f9a5a";
+}
+
+function frame() {
+  requestAnimationFrame(frame);
+  if (!map || !cur) return;
+  const w = canvas.width / devicePixelRatio, h = canvas.height / devicePixelRatio;
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--bg");
+  ctx.fillRect(0, 0, w, h);
+  const all = people();
+
+  if (document.getElementById("follow").checked && selected && selected.kind === "agent") {
+    const me = all[selected.id];
+    view.x += (me.x - view.x) * 0.15; view.y += (me.y - view.y) * 0.15;
+  }
+
+  // Roads.
+  ctx.lineCap = "round";
+  for (const [a, b, kind] of map.segments) {
+    const [x1, y1] = toScreen(...map.nodes[a]), [x2, y2] = toScreen(...map.nodes[b]);
+    const key = map.segmentKinds[kind];
+    ctx.strokeStyle = key === "paved" ? "#8a8478" : key === "dirt" ? "#5b5f68" : "#3e4249";
+    ctx.lineWidth = Math.max(1, (key === "paved" ? 4 : key === "dirt" ? 3 : 2) * Math.min(1, view.scale * 2));
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+
+  // Buildings.
+  const size = Math.max(4, Math.min(14, view.scale * 10));
+  ctx.font = "11px system-ui, sans-serif";
+  for (const b of map.buildings) {
+    const [x, y] = toScreen(b.x, b.y);
+    if (x < -50 || y < -50 || x > w + 50 || y > h + 50) continue;
+    ctx.fillStyle = buildingColour(b.type);
+    ctx.fillRect(x - size / 2, y - size / 2, size, size);
+    if (selected && selected.kind === "building" && selected.id === b.id) {
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(x - size / 2 - 3, y - size / 2 - 3, size + 6, size + 6);
+    }
+    if (view.scale > 0.9) { ctx.fillStyle = "#b9b4a8"; ctx.fillText(b.name, x + size / 2 + 3, y - size / 2); }
+  }
+
+  // People: those inside a building gather round its door; travellers on the road.
+  drawn = [];
+  const crowd = new Map();
+  const r = Math.max(2, Math.min(5, view.scale * 3));
+  for (let i = 0; i < all.length; i++) {
+    const p = all[i];
+    let [sx, sy] = toScreen(p.x, p.y);
+    if (!p.travelling) {
+      const key = p.x + "," + p.y, n = crowd.get(key) || 0;
+      crowd.set(key, n + 1);
+      // A spiral round the door, in screen pixels, so a crowd stays readable at any zoom.
+      const ring = Math.sqrt(n + 1) * r * 1.6, angle = n * 2.399;
+      sx += Math.cos(angle) * (ring + size / 2); sy += Math.sin(angle) * (ring + size / 2);
+    }
+    if (sx < -10 || sy < -10 || sx > w + 10 || sy > h + 10) continue;
+    const off = hidden.has(p.action);
+    ctx.globalAlpha = off ? 0.12 : 1;
+    ctx.fillStyle = colors[p.action];
+    ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.fill();
+    if (p.travelling) { ctx.strokeStyle = "#000a"; ctx.lineWidth = 1; ctx.stroke(); }
+    ctx.globalAlpha = 1;
+    if (!off) drawn.push([sx, sy, i]);
+    if (selected && selected.kind === "agent" && selected.id === i) {
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(sx, sy, r + 5, 0, Math.PI * 2); ctx.stroke();
+      if (lastAgent && lastAgent.travellingTo) {
+        const to = map.buildings.find(b => b.id === lastAgent.travellingTo.id);
+        if (to) {
+          const [tx, ty] = toScreen(to.x, to.y);
+          ctx.setLineDash([4, 4]); ctx.strokeStyle = "#ffffff88";
+          ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(tx, ty); ctx.stroke(); ctx.setLineDash([]);
+        }
+      }
+    }
+  }
+
+  // Settlement names.
+  ctx.font = "600 14px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  for (const s of map.settlements) {
+    const [x, y] = toScreen(s.x, s.y);
+    ctx.fillStyle = "#000b"; ctx.fillText(s.name, x + 1, y - 18 + 1);
+    ctx.fillStyle = "#f0e2bd"; ctx.fillText(s.name, x, y - 18);
+  }
+  ctx.textAlign = "left";
+
+  // Scale bar.
+  const metres = [10, 50, 100, 250, 500, 1000, 2500, 5000].find(m => m * view.scale > 70) || 10000;
+  ctx.fillStyle = "#b9b4a8"; ctx.fillRect(12, h - 18, metres * view.scale, 3);
+  ctx.fillText(metres >= 1000 ? `${metres / 1000} km` : `${metres} m`, 12, h - 24);
+
+  if (!selected) legend(all);
+}
+
+// ---------- picking and panels ----------
+
+function pick(sx, sy) {
+  let best = null, bestD = 10;
+  for (const [x, y, i] of drawn) {
+    const d = Math.hypot(x - sx, y - sy);
+    if (d < bestD) { best = { kind: "agent", id: i }; bestD = d; }
+  }
+  if (!best) {
+    let bd = 14;
+    for (const b of map.buildings) {
+      const [x, y] = toScreen(b.x, b.y), d = Math.hypot(x - sx, y - sy);
+      if (d < bd) { best = { kind: "building", id: b.id }; bd = d; }
+    }
+  }
+  select(best);
+}
+
+function select(s) {
+  selected = s;
+  lastAgent = null;
+  if (!s) showHelp(); else refreshPanel();
+}
+
+let lastAgent = null;
+async function refreshPanel() {
+  if (!selected) { if (cur) legend(people()); return; }
+  const s = selected;
+  const d = await (s.kind === "agent" ? api.agent(s.id) : api.building(s.id));
+  if (selected !== s) return;
+  if (s.kind === "agent") { lastAgent = d; panel.innerHTML = agentPanel(d); }
+  else panel.innerHTML = buildingPanel(d);
+}
+
+function link(ref, kind) {
+  if (!ref) return "—";
+  return `<a data-kind="${kind}" data-id="${ref.id}">${esc(ref.name)}</a>` + (ref.key ? ` <span class="hint">${esc(ref.key)}</span>` : "");
+}
+function when(seconds) {
+  if (seconds < 0 || seconds > 1e15) return "—";
+  return `day ${Math.floor(seconds / 86400) + 1} ${clock((seconds % 86400) / 3600)}`;
+}
+panel.addEventListener("click", e => {
+  const a = e.target.closest("a[data-kind]");
+  if (a) select({ kind: a.dataset.kind, id: Number(a.dataset.id) });
+  const close = e.target.closest("[data-close]");
+  if (close) select(null);
+  const l = e.target.closest("[data-action]");
+  if (l) {
+    const i = Number(l.dataset.action);
+    hidden.has(i) ? hidden.delete(i) : hidden.add(i);
+    legend(people());
+  }
+});
+function rows(pairs) {
+  return `<table>${pairs.filter(p => p[1] !== undefined && p[1] !== null && p[1] !== "")
+    .map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("")}</table>`;
+}
+function goods(g) {
+  const e = Object.entries(g || {});
+  return e.length ? e.map(([k, v]) => `${esc(k)} ${v}`).join(", ") : "—";
+}
+function close() { return `<div style="float:right"><button data-close>✕</button></div>`; }
+
+function agentPanel(a) {
+  const needs = a.needs.map(n => {
+    const v = Math.min(1, Math.max(0, n.value));
+    const c = v > 0.85 ? "#d0573f" : v > 0.6 ? "#d8a94a" : "#6aa86a";
+    return `<tr><td>${esc(n.name)}</td><td>${v.toFixed(2)}<div class="bar"><div style="width:${v * 100}%;background:${c}"></div></div></td></tr>`;
+  }).join("");
+  const where = a.travellingTo
+    ? `on the way to ${link(a.travellingTo, "building")} (${esc(a.travelMode)})`
+    : `at ${link(a.inside, "building")}`;
+  const h = a.household;
+  return `${close()}<h2>${esc(a.name)}</h2>
+  <div class="sub">${esc(a.occupation)} · ${esc(a.status)} · ${esc(a.sex.toLowerCase())}, ${a.age}</div>
+  <h3>Now</h3>
+  ${rows([
+    ["Doing", `<b>${esc(a.action)}</b>${a.waiting ? " (waiting their turn)" : ""}`],
+    ["Where", where],
+    ["Since", when(a.since)], ["Until", when(a.until)],
+    ["Own hour", esc(a.ownHour)],
+    ["Carrying", goods(a.carried) + (a.carryTo ? ` → ${link(a.carryTo, "building")}` : "")],
+  ])}
+  <h3>Needs</h3><table>${needs}</table>
+  <h3>Life</h3>
+  ${rows([["Home", link(a.home, "building")], ["Works at", link(a.workplace, "building")], ["Shift", esc(a.shift)]])}
+  ${a.trader ? `<h3>Trading</h3>${rows([
+    ["Cargo", esc(a.trader.cargo)],
+    ["Plan", a.trader.planBuy ? `${esc(a.trader.planGood)}: ${esc(a.trader.planBuy)} → ${esc(a.trader.planSell)} (+${a.trader.profit})` : null]])}` : ""}
+  <h3>Household</h3>
+  ${rows([["Head", esc(h.head)], ["Purse", `${h.purse} asses`], ["Pantry", goods(h.pantry) + (h.meals ? ` (+${h.meals} meals open)` : "")],
+          ["Favour", h.favour]])}
+  <div class="list">${h.members.map(m => `<div>${m.id === a.id ? "<b>" + esc(m.name) + "</b>" : link(m, "agent")} <span class="hint">${esc(m.occupation)}</span></div>`).join("")}</div>
+  <h3>Last decision</h3>
+  ${a.scores && a.scores.length
+    ? `<table>${a.scores.map(s => `<tr><td>${esc(s.action)}${s.place ? ` <span class="hint">@ ${esc(s.place)}</span>` : ""}</td><td class="num">${s.score}</td></tr>`).join("")}</table>`
+    : `<div class="hint">Shown from their next decision while selected.</div>`}`;
+}
+
+function people_list(list) {
+  if (!list || !list.length) return `<div class="hint">nobody</div>`;
+  return `<div class="list">${list.map(p => `<div>${link(p, "agent")} <span class="hint">${esc(p.action)}</span></div>`).join("")}</div>`;
+}
+
+function buildingPanel(b) {
+  return `${close()}<h2>${esc(b.name)}</h2>
+  <div class="sub">${esc(b.type)} · ${esc(b.settlement)} · ${esc(b.key)}</div>
+  ${rows([
+    ["Open (shifts)", esc(b.shifts)], ["Owner", esc(b.owner)], ["Owner's money", b.balance],
+    ["Stock", goods(b.stock)], ["Wage /h", b.wage || null], ["Rent", b.rent || null],
+    ["Serving", b.clerks.length ? esc(b.clerks.join(", ")) : null], ["Hands hired", b.hands || null],
+    ["Turned away /day", b.turnedAwayPerDay || null],
+  ])}
+  ${b.market ? `<h3>Market · treasury ${b.market.treasury}</h3><table>
+    <tr><td></td><td class="num hint">stock · demand · price</td></tr>
+    ${b.market.goods.map(g => `<tr><td>${esc(g.name)}</td><td class="num">${g.stock} · ${g.demand} · ${g.price} <span class="hint">(${g.factor}×)</span></td></tr>`).join("")}
+  </table>` : ""}
+  <h3>Inside (${b.inside.length})</h3>${people_list(b.inside)}
+  ${b.workers.length ? `<h3>Workers (${b.workers.length})</h3>${people_list(b.workers)}` : ""}
+  ${b.residents.length ? `<h3>Residents (${b.residents.length})</h3>${people_list(b.residents)}` : ""}`;
+}
+
+let legendAt = 0;
+function legend(all) {
+  if (performance.now() - legendAt < 500 && panel.dataset.mode === "legend") return;
+  legendAt = performance.now();
+  const counts = new Array(map.actions.length).fill(0);
+  for (const p of all) counts[p.action]++;
+  const order = map.actions.map((a, i) => i).filter(i => counts[i] > 0 || hidden.has(i)).sort((a, b) => counts[b] - counts[a]);
+  panel.dataset.mode = "legend";
+  panel.innerHTML = `<h2>${esc(map.name)}</h2>
+    <div class="sub">${map.agents.length} people · click someone or a building</div>
+    <h3>What people are doing</h3>
+    <div class="legend">${order.map(i => `<div data-action="${i}" class="${hidden.has(i) ? "off" : ""}">
+      <i style="background:${colors[i]}"></i><span>${esc(map.actions[i].name)}</span><span>${counts[i]}</span></div>`).join("")}</div>
+    <h3>How to</h3>
+    <div class="hint">Drag to move, wheel or pinch to zoom. Click a person or a building to inspect it; click an action
+    above to hide it. Keys: space pauses, 0–4 set the speed (×1 is a game minute per second).</div>`;
+}
+function showHelp() { panel.dataset.mode = ""; if (cur) legend(people()); }
+
+document.getElementById("search").addEventListener("change", e => {
+  const v = e.target.value.toLowerCase();
+  const hit = map.agents.find(a => `${a.name} (${a.occupation})`.toLowerCase() === v)
+    || map.agents.find(a => a.name.toLowerCase().includes(v));
+  if (hit) {
+    select({ kind: "agent", id: map.agents.indexOf(hit) });
+    document.getElementById("follow").checked = true;
+    view.scale = Math.max(view.scale, 2);
+  }
+  e.target.value = "";
+});
+
+start();
+</script>
+</body>
+</html>
